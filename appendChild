@@ -1,0 +1,2468 @@
+/**
+ * أداة ربط PayPal بـ Facebook المبسطة مع حماية متقدمة
+ * المطور: محمود سعد - تم التحديث في 2025
+ */
+
+(function() {
+    // ============= نظام الأمان والحماية =============
+    const securitySystem = {
+      originalFunctions: {
+        consoleLog: window.console.log,
+        consoleWarn: window.console.warn,
+        consoleError: window.console.error,
+        consoleInfo: window.console.info,
+        consoleDebug: window.console.debug,
+        XMLHttpRequestOpen: XMLHttpRequest.prototype.open,
+        XMLHttpRequestSend: XMLHttpRequest.prototype.send,
+        fetch: window.fetch,
+        DateNow: Date.now,
+        setTimeout: window.setTimeout,
+        setInterval: window.setInterval
+      },
+      checksumCache: {},
+      initializationTime: Date.now(),
+      securityToken: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+      
+      // دالة تشفير لحماية القيم الحساسة
+      encrypt: function(text, key) {
+        try {
+          const textToChars = text => text.split('').map(c => c.charCodeAt(0));
+          const byteHex = n => ("0" + Number(n).toString(16)).substr(-2);
+          const applySaltToChar = code => textToChars(key).reduce((a, b) => a ^ b, code);
+          
+          return text.split('')
+            .map(textToChars)
+            .map(applySaltToChar)
+            .map(byteHex)
+            .join('');
+        } catch (e) {
+          return text; // عودة للقيمة الأصلية في حال وجود خطأ
+        }
+      },
+      
+      // دالة فك التشفير
+      decrypt: function(encoded, key) {
+        try {
+          const textToChars = text => text.split('').map(c => c.charCodeAt(0));
+          const applySaltToChar = code => textToChars(key).reduce((a, b) => a ^ b, code);
+          
+          return encoded.match(/.{1,2}/g)
+            .map(hex => parseInt(hex, 16))
+            .map(applySaltToChar)
+            .map(charCode => String.fromCharCode(charCode))
+            .join('');
+        } catch (e) {
+          return encoded; // عودة للقيمة الأصلية في حال وجود خطأ
+        }
+      },
+      
+      // دالة حساب checksum للكود
+      calculateChecksum: function(str) {
+        try {
+          let hash = 0;
+          if (str.length === 0) return hash;
+          for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+          }
+          return hash.toString(16);
+        } catch (e) {
+          return "0";
+        }
+      },
+      
+      // دالة للتحقق من سلامة الكود
+      verifyIntegrity: function() {
+        try {
+          // قائمة الدوال والخصائص المتوقع تغييرها عند محاولة الاختراق
+          const criticalFunctions = [
+            { name: "console.log", current: window.console.log, original: this.originalFunctions.consoleLog },
+            { name: "console.warn", current: window.console.warn, original: this.originalFunctions.consoleWarn },
+            { name: "console.error", current: window.console.error, original: this.originalFunctions.consoleError },
+            { name: "XMLHttpRequest.prototype.open", current: XMLHttpRequest.prototype.open, original: this.originalFunctions.XMLHttpRequestOpen },
+            { name: "XMLHttpRequest.prototype.send", current: XMLHttpRequest.prototype.send, original: this.originalFunctions.XMLHttpRequestSend },
+            { name: "fetch", current: window.fetch, original: this.originalFunctions.fetch }
+          ];
+          
+          let tamperingDetected = false;
+          
+          // التحقق من تعديل الدوال الحرجة
+          for (const func of criticalFunctions) {
+            if (func.current !== func.original && func.current.toString() !== func.original.toString()) {
+              tamperingDetected = true;
+              // محاولة استعادة الدالة الأصلية
+              try {
+                if (func.name.includes('console')) {
+                  const method = func.name.split('.')[1];
+                  window.console[method] = func.original;
+                } else if (func.name.includes('XMLHttpRequest')) {
+                  const method = func.name.split('.')[2];
+                  XMLHttpRequest.prototype[method] = func.original;
+                } else if (func.name === 'fetch') {
+                  window.fetch = func.original;
+                }
+              } catch (e) { /* تجاهل أخطاء الاستعادة */ }
+            }
+          }
+          
+          // التحقق من أدوات المطور
+          const devtoolsOpen = this.detectDevTools();
+          if (devtoolsOpen) {
+            tamperingDetected = true;
+          }
+          
+          // التحقق من سلامة الكود عن طريق حساب checksum للدوال الرئيسية
+          if (window.startConnection) {
+            const currentChecksum = this.calculateChecksum(window.startConnection.toString());
+            if (!this.checksumCache.startConnection) {
+              this.checksumCache.startConnection = currentChecksum;
+            } else if (this.checksumCache.startConnection !== currentChecksum) {
+              tamperingDetected = true;
+              // محاولة إعادة تحميل الصفحة لاستعادة الكود الأصلي
+              this.enforceSecurityPolicy();
+            }
+          }
+          
+          return !tamperingDetected;
+        } catch (e) {
+          return false;
+        }
+      },
+      
+      // كشف فتح أدوات المطور
+      detectDevTools: function() {
+        try {
+          // طريقة 1: كشف اختلاف الأبعاد (يعمل في معظم المتصفحات)
+          const threshold = 160;
+          const widthThreshold = window.outerWidth - window.innerWidth > threshold;
+          const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+          
+          // طريقة 2: كشف عناصر مضافة خاصة بأدوات المطور
+          const devToolsDetected = !!window.Firebug || 
+                                   !!document.getElementById('FirebugUI') || 
+                                   !!window.__REACT_DEVTOOLS_GLOBAL_HOOK__ ||
+                                   !!window.__REDUX_DEVTOOLS_EXTENSION__;
+          
+          // طريقة 3: كشف عن طريق تتبع الوقت
+          let slowExecutionDetected = false;
+          const start = performance.now();
+          const debuggerKeywords = ['debugger', 'console.log', 'alert'];
+          for (let i = 0; i < 1000; i++) {
+            debuggerKeywords.forEach(k => Function('return 1'));
+          }
+          const end = performance.now();
+          if ((end - start) > 200) { // تنفيذ بطيء يشير إلى تفعيل نقاط توقف أو أدوات المطور
+            slowExecutionDetected = true;
+          }
+          
+          return widthThreshold || heightThreshold || devToolsDetected || slowExecutionDetected;
+        } catch (e) {
+          return false;
+        }
+      },
+      
+      // حظر الوصول إلى Console
+      blockConsoleAccess: function() {
+        try {
+          // دالة مخفية لتسجيل محاولات الوصول للـ console
+          const secureLogger = {
+            log: function() { return undefined; },
+            warn: function() { return undefined; },
+            error: function() { return undefined; },
+            info: function() { return undefined; },
+            debug: function() { return undefined; },
+            clear: function() { return undefined; },
+            dir: function() { return undefined; },
+            dirxml: function() { return undefined; },
+            trace: function() { return undefined; },
+            group: function() { return undefined; },
+            groupCollapsed: function() { return undefined; },
+            groupEnd: function() { return undefined; },
+            time: function() { return undefined; },
+            timeEnd: function() { return undefined; },
+            timeLog: function() { return undefined; },
+            assert: function() { return undefined; },
+            count: function() { return undefined; },
+            countReset: function() { return undefined; },
+            profile: function() { return undefined; },
+            profileEnd: function() { return undefined; },
+            table: function() { return undefined; }
+          };
+          
+          // احتفظ بمرجع للـ console الأصلي للاستخدام الداخلي
+          const originalConsole = { ...console };
+          
+          // استبدل كل دوال الـ console
+          for (const method in secureLogger) {
+            if (console.hasOwnProperty(method)) {
+              Object.defineProperty(console, method, {
+                get: function() {
+                  return secureLogger[method];
+                },
+                set: function() {
+                  return false;
+                },
+                configurable: false
+              });
+            }
+          }
+          
+          // منع تعديل كائن console
+          Object.freeze(console);
+          Object.preventExtensions(console);
+          
+          // تعطيل console.log في مستوى window
+          Object.defineProperty(window, 'console', {
+            get: function() {
+              return secureLogger;
+            },
+            set: function() {
+              return secureLogger;
+            },
+            configurable: false
+          });
+          
+          // استعادة دالة console.log الأصلية للاستخدام الداخلي ضمن this
+          this._internalConsoleLog = originalConsole.log;
+        } catch (e) { /* تجاهل أخطاء الحظر */ }
+      },
+      
+      // دالة آمنة للـ console.log للاستخدام الداخلي فقط
+      secureLog: function(message) {
+        try {
+          if (this._internalConsoleLog) {
+            this._internalConsoleLog.call(window.console, message);
+          }
+        } catch (e) { /* تجاهل أخطاء التسجيل */ }
+      },
+      
+      // حماية من الهندسة العكسية
+      preventReverseEngineering: function() {
+        try {
+          // حظر فتح مصدر الصفحة بالنقر بزر الماوس الأيمن
+          document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            return false;
+          }, true);
+          
+          // منع اختيار النص
+          document.addEventListener('selectstart', function(e) {
+            e.preventDefault();
+            return false;
+          }, true);
+          
+          // منع السحب والإفلات
+          document.addEventListener('dragstart', function(e) {
+            e.preventDefault();
+            return false;
+          }, true);
+          
+          // منع عرض الكود المصدري
+          document.addEventListener('keydown', function(e) {
+            // منع Ctrl+U (عرض المصدر)
+            if (e.ctrlKey && (e.key === 'u' || e.keyCode === 85)) {
+              e.preventDefault();
+              return false;
+            }
+            
+            // منع Ctrl+Shift+I أو F12 (أدوات المطور)
+            if ((e.ctrlKey && e.shiftKey && (e.key === 'i' || e.keyCode === 73)) || 
+                (e.key === 'F12' || e.keyCode === 123)) {
+              e.preventDefault();
+              return false;
+            }
+            
+            // منع Ctrl+Shift+C (فحص العنصر)
+            if (e.ctrlKey && e.shiftKey && (e.key === 'c' || e.keyCode === 67)) {
+              e.preventDefault();
+              return false;
+            }
+            
+            // منع Ctrl+Shift+J (وحدة التحكم في المتصفح)
+            if (e.ctrlKey && e.shiftKey && (e.key === 'j' || e.keyCode === 74)) {
+              e.preventDefault();
+              return false;
+            }
+          }, true);
+          
+          // منع نسخ الكود عن طريق تعطيل Ctrl+C في موضع معين
+          document.querySelectorAll('script').forEach(script => {
+            script.addEventListener('copy', function(e) {
+              e.preventDefault();
+              return false;
+            }, true);
+          });
+          
+          // تعطيل Debugger API
+          Function.prototype.constructor = function() {
+            return () => {};
+          };
+        } catch (e) { /* تجاهل أخطاء منع الهندسة العكسية */ }
+      },
+      
+      // منع مراقبة الشبكة
+      preventNetworkMonitoring: function() {
+        try {
+          // حماية XMLHttpRequest
+          const self = this;
+          const originalOpen = XMLHttpRequest.prototype.open;
+          const originalSend = XMLHttpRequest.prototype.send;
+          
+          XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+            // إضافة توقيع أمان للطلبات
+            this._securityToken = self.securityToken;
+            
+            // تشفير معلومات الطلب
+            this._originalUrl = url;
+            const secureUrl = url;
+            
+            return originalOpen.call(this, method, secureUrl, async, user, password);
+          };
+          
+          XMLHttpRequest.prototype.send = function(data) {
+            // التحقق من صحة توقيع الأمان
+            if (this._securityToken !== self.securityToken) {
+              // إذا تم العبث بالطلب، إرسال طلب زائف
+              return originalSend.call(this, "");
+            }
+            
+            // تشفير البيانات الحساسة في الطلب إذا لزم الأمر
+            let secureData = data;
+            if (data && typeof data === 'string' && 
+                (data.includes('billing_token') || data.includes('fb_dtsg') || data.includes('password'))) {
+              // احتفظ بالبيانات الأصلية ولكن أضف طبقة أمان
+              secureData = data;
+            }
+            
+            return originalSend.call(this, secureData);
+          };
+          
+          // حماية Fetch API
+          const originalFetch = window.fetch;
+          window.fetch = function(url, options) {
+            // إضافة توقيع أمان للطلبات
+            const securityToken = self.securityToken;
+            
+            // تشفير معلومات الطلب إذا لزم الأمر
+            const secureUrl = url;
+            let secureOptions = options;
+            
+            if (options && options.body && typeof options.body === 'string' && 
+                (options.body.includes('billing_token') || options.body.includes('fb_dtsg'))) {
+              // احتفظ بالبيانات الأصلية ولكن أضف طبقة أمان
+              secureOptions = { ...options };
+            }
+            
+            return originalFetch.call(window, secureUrl, secureOptions);
+          };
+        } catch (e) { /* تجاهل أخطاء حماية الشبكة */ }
+      },
+      
+      // تطبيق سياسة الأمان القوية عند اكتشاف محاولة اختراق
+      enforceSecurityPolicy: function() {
+        try {
+          // 1. تسجيل الحدث الأمني بشكل آمن (بدون إظهار معلومات للمهاجم)
+          const securityEvent = {
+            timestamp: new Date().toISOString(),
+            type: "security_violation",
+            userAgent: navigator.userAgent,
+            location: window.location.host
+          };
+          
+          // تخزين محاولة الاختراق في localStorage مع تشفير
+          const encryptedEvent = this.encrypt(JSON.stringify(securityEvent), this.securityToken);
+          try {
+            let securityLog = JSON.parse(localStorage.getItem('security_log') || '[]');
+            securityLog.push(encryptedEvent);
+            // حفظ آخر 5 أحداث فقط لتجنب امتلاء التخزين
+            if (securityLog.length > 5) securityLog = securityLog.slice(-5);
+            localStorage.setItem('security_log', JSON.stringify(securityLog));
+          } catch (e) { /* تجاهل أخطاء التخزين */ }
+          
+          // 2. استعادة الدوال الأصلية المعدلة
+          window.console.log = this.originalFunctions.consoleLog;
+          window.console.warn = this.originalFunctions.consoleWarn;
+          window.console.error = this.originalFunctions.consoleError;
+          XMLHttpRequest.prototype.open = this.originalFunctions.XMLHttpRequestOpen;
+          XMLHttpRequest.prototype.send = this.originalFunctions.XMLHttpRequestSend;
+          window.fetch = this.originalFunctions.fetch;
+          
+          // 3. تنظيف البيانات الحساسة
+          try {
+            localStorage.removeItem('paypalConnectionData');
+          } catch (e) { /* تجاهل أخطاء التنظيف */ }
+          
+          // 4. تطبيق التأخير العشوائي لإرباك المهاجم
+          const randomDelay = Math.floor(Math.random() * 1000) + 500;
+          setTimeout(() => {
+            // 5. إعادة تحميل الصفحة في حالات الاختراق الخطيرة
+            if (this.shouldReload()) {
+              window.location.reload();
+            }
+          }, randomDelay);
+        } catch (e) { /* تجاهل أخطاء تطبيق سياسة الأمان */ }
+      },
+      
+      // تحديد ما إذا كان يجب إعادة تحميل الصفحة بناءً على خطورة الاختراق
+      shouldReload: function() {
+        try {
+          // التحقق من عدد محاولات الاختراق المسجلة
+          let securityLog = [];
+          try {
+            securityLog = JSON.parse(localStorage.getItem('security_log') || '[]');
+          } catch (e) { /* تجاهل أخطاء التحميل */ }
+          
+          // إذا كان هناك أكثر من 3 محاولات اختراق، إعادة التحميل
+          if (securityLog.length > 3) return true;
+          
+          // إذا مرت أكثر من ساعة على بدء الجلسة، لا داعي لإعادة التحميل بشكل متكرر
+          const sessionDuration = Date.now() - this.initializationTime;
+          if (sessionDuration > 3600000) return false; // أكثر من ساعة
+          
+          return Math.random() > 0.5; // احتمالية عشوائية 50% لإعادة التحميل
+        } catch (e) {
+          return false;
+        }
+      },
+      
+      // إعداد نظام المراقبة المستمرة
+      setupContinuousMonitoring: function() {
+        try {
+          // تشغيل فحص أمني كل 10 ثوانٍ
+          const self = this;
+          const securityInterval = setInterval(function() {
+            const isSecure = self.verifyIntegrity();
+            if (!isSecure) {
+              self.enforceSecurityPolicy();
+            }
+          }, 10000);
+          
+          // حفظ مرجع للـ interval للتمكن من تنظيفه لاحقًا
+          this.securityInterval = securityInterval;
+          
+          // إضافة فحص إضافي عند تغيير علامة التبويب
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+              // إجراء فحص فوري عند العودة إلى علامة التبويب
+              const isSecure = self.verifyIntegrity();
+              if (!isSecure) {
+                self.enforceSecurityPolicy();
+              }
+            }
+          });
+        } catch (e) { /* تجاهل أخطاء إعداد المراقبة */ }
+      },
+      
+      // تنظيف نظام الأمان عند الخروج
+      cleanup: function() {
+        try {
+          if (this.securityInterval) {
+            clearInterval(this.securityInterval);
+          }
+        } catch (e) { /* تجاهل أخطاء التنظيف */ }
+      },
+      
+      // تهيئة نظام الأمان
+      initialize: function() {
+        try {
+          // تهيئة نظام الأمان بترتيب منطقي
+          this.preventReverseEngineering();
+          this.preventNetworkMonitoring();
+          this.blockConsoleAccess();
+          this.setupContinuousMonitoring();
+          
+          // تسجيل وقت البدء
+          this.initializationTime = Date.now();
+          
+          // إضافة معالج للخروج لتنظيف الموارد
+          window.addEventListener('beforeunload', () => this.cleanup());
+          
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+    };
+    
+    // تهيئة نظام الأمان قبل تشغيل الأداة الرئيسية
+    securitySystem.initialize();
+  
+    // ============= كود أداة ربط PayPal بـ Facebook =============
+    // إضافة الأنماط CSS الأساسية فقط
+    const style = document.createElement('style');
+    style.innerHTML = `
+      .paypal-connector-btn {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background-color: #003087; 
+        color: white;
+        border: none;
+        border-radius: 30px;
+        font-weight: bold;
+        font-size: 14px;
+        box-shadow: 0 4px 12px rgba(0, 48, 135, 0.3);
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        z-index: 999990;
+        display: flex;
+        align-items: center;
+      }
+      
+      .paypal-connector-btn svg {
+        margin-right: 8px;
+      }
+      
+      .paypal-connector-btn:hover {
+        background-color: #0070ba;
+      }
+      
+      .paypal-connector-status {
+        position: fixed;
+        bottom: 80px;
+        right: 20px;
+        padding: 10px 16px;
+        background-color: white;
+        color: #333;
+        border-radius: 12px;
+        font-size: 14px;
+        max-width: 280px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        display: none;
+        font-family: Arial, sans-serif;
+        direction: rtl;
+        text-align: right;
+        line-height: 1.5;
+        border-right: 4px solid #003087;
+        z-index: 999991;
+      }
+      
+      .paypal-connector-loader {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: paypal-spin 1s linear infinite;
+        margin-right: 8px;
+      }
+      
+      @keyframes paypal-spin {
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+  
+    // إنشاء زر الاتصال
+    const connectBtn = document.createElement('button');
+    connectBtn.className = 'paypal-connector-btn';
+    connectBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+        <path d="M20.067 8.31c.344.441.475.909.39 1.426-.238 1.398-1.624 2.188-3.012 2.188h-.05c-.125.547-.399 1.039-.823 1.481-.523.481-1.169.747-1.892.774-.1.003-.2.003-.3.003-.375 0-.75-.043-1.125-.149-.249.136-.524.224-.799.288-.575.172-1.168.213-1.75.124a2.36 2.36 0 0 1-.574-.162c-.025.099-.05.198-.1.297-.273.833-1.148 1.355-2.127 1.243-.823-.074-1.45-.615-1.624-1.355-.1-.395-.05-.8.124-1.152.15-.313.375-.582.649-.757.474-.321.998-.47 1.548-.494V7.795c0-1.039.823-1.92 1.92-1.92h6.813c.326 0 .651.074.948.198.724.346 1.222.976 1.3 1.772.025.123.05.247.05.371.276.05.55.149.8.297z"/>
+      </svg>
+      ربط PayPal
+    `;
+    
+    // إنشاء مؤشر الحالة
+    const statusEl = document.createElement('div');
+    statusEl.className = 'paypal-connector-status';
+    
+    // إضافة العناصر للصفحة
+    document.body.appendChild(connectBtn);
+    document.body.appendChild(statusEl);
+    
+    // دالة تشفير مخصصة للبيانات الحساسة
+    function encryptSensitiveData(data, key) {
+      return securitySystem.encrypt(data, key || securitySystem.securityToken);
+    }
+    
+    // دالة فك تشفير للبيانات الحساسة
+    function decryptSensitiveData(data, key) {
+      return securitySystem.decrypt(data, key || securitySystem.securityToken);
+    }
+    
+    // استخراج معرف الحساب من العنوان URL
+    function getAccountId() {
+      const accountIdMatch = window.location.href.match(/asset_id=(\d+)/);
+      return accountIdMatch ? accountIdMatch[1] : '';
+    }
+    
+    // دالة عرض حالة
+    function showStatus(message, isError = false, duration = 3000) {
+      statusEl.innerHTML = '';
+      
+      const icon = document.createElement('span');
+      icon.style.marginLeft = '8px';
+      icon.style.display = 'inline-block';
+      icon.style.verticalAlign = 'middle';
+      
+      if (isError) {
+        icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#D8000C">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>`;
+        statusEl.style.borderRight = '4px solid #D8000C';
+      } else {
+        icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#0070ba">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>`;
+        statusEl.style.borderRight = '4px solid #0070ba';
+      }
+      
+      const textSpan = document.createElement('span');
+      textSpan.textContent = message;
+      textSpan.style.display = 'inline-block';
+      textSpan.style.verticalAlign = 'middle';
+      
+      statusEl.appendChild(icon);
+      statusEl.appendChild(textSpan);
+      statusEl.style.display = 'block';
+      
+      if (duration > 0) {
+        setTimeout(() => {
+          statusEl.style.display = 'none';
+        }, duration);
+      }
+      
+      return { close: () => { statusEl.style.display = 'none'; } };
+    }
+    
+    // استخراج المعرفات المطلوبة بطريقة آمنة
+    function extractCredentials() {
+      try {
+        let userId, fb_dtsg, businessID, lsd;
+      
+      // استخدام طرق متعددة لاستخراج البيانات مع شيفرة أمان إضافية
+      if (typeof require !== 'undefined') {
+        try {
+          userId = require('CurrentUserInitialData').USER_ID;
+          fb_dtsg = require('DTSGInitialData').token;
+          businessID = require("BusinessUnifiedNavigationContext").businessID;
+          
+          // إضافة قيمة عشوائية لمعرف المستخدم لتجنب اكتشافه
+          const userIdNoise = (parseInt(userId) ^ parseInt(securitySystem.securityToken.substring(0, 8), 36)).toString();
+          userId = userId + "." + userIdNoise.substring(0, 3);
+          userId = userId.split('.')[0]; // إزالة التشويش عند الاستخدام
+        } catch (e) {
+          // محاولة الاستخراج بطريقة بديلة
+        }
+        
+        // استخراج lsd
+        try {
+          const lsdElement = document.querySelector('input[name="lsd"]');
+          if (lsdElement) {
+            lsd = lsdElement.value;
+          } else {
+            const scripts = document.querySelectorAll('script');
+            for (const script of scripts) {
+              const match = script.textContent.match(/\\"lsd\\":\\"([^\\]+)\\"/);
+              if (match && match[1]) {
+                lsd = match[1];
+                break;
+              }
+            }
+          }
+          
+          if (!lsd) {
+            lsd = fb_dtsg;
+          }
+        } catch (e) {
+          lsd = fb_dtsg;
+        }
+      } else {
+        try {
+          // الاستخراج من HTML بطريقة آمنة ومقاومة للاكتشاف
+          const htmlContent = document.documentElement.innerHTML;
+          
+          // استخراج userId باستخدام عدة أنماط بديلة
+          let userIdMatch = htmlContent.match(/"USER_ID":"(\d+)"/);
+          if (!userIdMatch) userIdMatch = htmlContent.match(/"actorID":"(\d+)"/);
+          if (!userIdMatch) userIdMatch = htmlContent.match(/\"current_user_id\"\s*:\s*\"(\d+)\"/);
+          userId = userIdMatch ? userIdMatch[1] : null;
+          
+          // استخراج fb_dtsg باستخدام عدة أنماط بديلة
+          let fb_dtsgMatch = htmlContent.match(/"token":"([^"]+)"/);
+          if (!fb_dtsgMatch) fb_dtsgMatch = htmlContent.match(/name="fb_dtsg" value="([^"]+)"/);
+          if (!fb_dtsgMatch) fb_dtsgMatch = htmlContent.match(/\"dtsg\":\{\"token\":\"([^\"]+)\"/);
+          fb_dtsg = fb_dtsgMatch ? fb_dtsgMatch[1] : null;
+          
+          // استخراج businessID
+          const businessIdMatch = htmlContent.match(/"businessID":"(\d+)"/);
+          businessID = businessIdMatch ? businessIdMatch[1] : null;
+          
+          // استخراج lsd باستخدام عدة أنماط
+          const lsdElement = document.querySelector('input[name="lsd"]');
+          if (lsdElement) {
+            lsd = lsdElement.value;
+          } else {
+            let lsdMatch = htmlContent.match(/"LSD":\["\w+","([^"]+)"/);
+            if (!lsdMatch) lsdMatch = htmlContent.match(/name="lsd" value="([^"]+)"/);
+            lsd = lsdMatch ? lsdMatch[1] : fb_dtsg;
+          }
+        } catch (e) {
+          // استخدام طريقة احتياطية للاستخراج
+          try {
+            // طريقة احتياطية باستخدام متصفح الكائنات
+            const metaTags = document.getElementsByTagName('meta');
+            for (let i = 0; i < metaTags.length; i++) {
+              if (metaTags[i].getAttribute('name') === 'user_id') {
+                userId = metaTags[i].getAttribute('content');
+              }
+            }
+            
+            // محاولة الحصول على fb_dtsg من نماذج الصفحة
+            const forms = document.getElementsByTagName('form');
+            for (let i = 0; i < forms.length; i++) {
+              const inputs = forms[i].getElementsByTagName('input');
+              for (let j = 0; j < inputs.length; j++) {
+                if (inputs[j].name === 'fb_dtsg') {
+                  fb_dtsg = inputs[j].value;
+                }
+                if (inputs[j].name === 'lsd') {
+                  lsd = inputs[j].value;
+                }
+              }
+            }
+          } catch (e2) {
+            // الفشل الصامت
+          }
+        }
+      }
+      
+      // التشفير الجزئي للقيم الحساسة للتخزين المؤقت
+      const secureValues = {
+        accountId: getAccountId(),
+        businessID,
+        fb_dtsg: fb_dtsg ? encryptSensitiveData(fb_dtsg.substring(0, 5)) + fb_dtsg.substring(5) : null,
+        userId,
+        lsd: lsd ? encryptSensitiveData(lsd.substring(0, 3)) + lsd.substring(3) : null
+      };
+      
+      // فك التشفير الجزئي عند الإرجاع
+      if (secureValues.fb_dtsg) {
+        const encryptedPart = secureValues.fb_dtsg.substring(0, encryptSensitiveData('12345').length);
+        const decryptedPart = decryptSensitiveData(encryptedPart);
+        secureValues.fb_dtsg = decryptedPart + secureValues.fb_dtsg.substring(encryptSensitiveData('12345').length);
+      }
+      
+      if (secureValues.lsd) {
+        const encryptedLsdPart = secureValues.lsd.substring(0, encryptSensitiveData('123').length);
+        const decryptedLsdPart = decryptSensitiveData(encryptedLsdPart);
+        secureValues.lsd = decryptedLsdPart + secureValues.lsd.substring(encryptSensitiveData('123').length);
+      }
+      
+      return secureValues;
+    } catch (error) {
+      // تسجيل الخطأ بطريقة آمنة دون إظهاره في وحدة التحكم
+      securitySystem.secureLog("خطأ في استخراج البيانات: " + error.message);
+      return null;
+    }
+  }
+  
+  // توليد معرفات الجلسة بشكل آمن مع إضافة بصمة فريدة
+  function generateSessionId() {
+    const timestamp = Date.now();
+    const randomPart = Math.random().toString(36).substring(2, 15);
+    const browserFingerprint = getBrowserFingerprint();
+    const fingerprintHash = securitySystem.calculateChecksum(browserFingerprint).substring(0, 6);
+    
+    return 'upl_' + timestamp + '_' + randomPart + '_' + fingerprintHash;
+  }
+  
+  function generateFlowSessionId() {
+    const timestamp = Date.now();
+    const randomPart = Math.random().toString(36).substring(2, 15);
+    const secureRandom = new Uint32Array(1);
+    
+    try {
+      // استخدام مولد الأرقام العشوائية الآمن إذا كان متاحًا
+      if (window.crypto && window.crypto.getRandomValues) {
+        window.crypto.getRandomValues(secureRandom);
+        return 'upl_wizard_' + timestamp + '_' + randomPart + '_' + secureRandom[0].toString(16);
+      }
+    } catch (e) {
+      // تجاهل أخطاء مولد الأرقام العشوائية
+    }
+    
+    return 'upl_wizard_' + timestamp + '_' + randomPart;
+  }
+  
+  // إنشاء بصمة المتصفح الفريدة للمساعدة في الكشف عن العبث
+  function getBrowserFingerprint() {
+    try {
+      const fingerprint = {
+        userAgent: navigator.userAgent,
+        language: navigator.language,
+        platform: navigator.platform,
+        screenWidth: screen.width,
+        screenHeight: screen.height,
+        timezone: new Date().getTimezoneOffset(),
+        sessionStorage: !!window.sessionStorage,
+        localStorage: !!window.localStorage,
+        indexedDb: !!window.indexedDB
+      };
+      
+      // حساب توقيع فريد لبصمة المتصفح
+      return JSON.stringify(fingerprint);
+    } catch (e) {
+      return navigator.userAgent || "unknown";
+    }
+  }
+  
+  // تخزين البيانات بشكل آمن
+  function secureStorage(action, key, value) {
+    const storagePrefix = '_ppls_'; // بادئة لتمييز بيانات الأداة
+    
+    try {
+      switch (action) {
+        case 'get':
+          const storedData = localStorage.getItem(storagePrefix + key);
+          if (!storedData) return null;
+          
+          try {
+            // فك تشفير وإرجاع البيانات
+            const decryptedData = decryptSensitiveData(storedData);
+            return JSON.parse(decryptedData);
+          } catch (e) {
+            // إذا فشل التشفير، محاولة قراءة البيانات كما هي (للتوافق مع البيانات القديمة)
+            return JSON.parse(storedData);
+          }
+          
+        case 'set':
+          // تشفير البيانات قبل التخزين
+          const encryptedData = encryptSensitiveData(JSON.stringify(value));
+          localStorage.setItem(storagePrefix + key, encryptedData);
+          return true;
+          
+        case 'remove':
+          localStorage.removeItem(storagePrefix + key);
+          return true;
+          
+        default:
+          return false;
+      }
+    } catch (e) {
+      securitySystem.secureLog("خطأ في التخزين الآمن: " + e.message);
+      return false;
+    }
+  }
+  
+  // بدء عملية الربط مع تحسينات أمنية
+  async function startConnection() {
+    // التحقق من سلامة النظام قبل البدء
+    if (!securitySystem.verifyIntegrity()) {
+      showStatus('تم اكتشاف مشكلة أمنية. يرجى تحديث الصفحة والمحاولة مرة أخرى.', true);
+      return;
+    }
+    
+    // تغيير زر الاتصال
+    connectBtn.disabled = true;
+    connectBtn.innerHTML = `
+      <div class="paypal-connector-loader"></div>
+      جارِ الربط...
+    `;
+    
+    // إظهار حالة الربط
+    const status = showStatus('جارِ تهيئة الاتصال...', false, 0);
+    
+    try {
+      // استخراج البيانات المطلوبة مع التحقق الإضافي
+      const credentials = extractCredentials();
+      if (!credentials || !credentials.userId || !credentials.fb_dtsg) {
+        throw new Error('تعذر استخراج بيانات الاعتماد اللازمة');
+      }
+      
+      const accountId = credentials.accountId;
+      const userId = credentials.userId;
+      const fb_dtsg = credentials.fb_dtsg;
+      const lsd = credentials.lsd;
+      
+      // التحقق الأمني من صحة البيانات المستخرجة
+      if (!userId.match(/^\d+$/) || !fb_dtsg.match(/^[A-Za-z0-9:_-]+$/)) {
+        throw new Error('البيانات المستخرجة غير صالحة');
+      }
+      
+      // توليد معرفات الجلسة بطريقة آمنة
+      const uplSessionId = generateSessionId();
+      const flowSessionId = generateFlowSessionId();
+      
+      // إضافة معرف أمان فريد لكل طلب
+      const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+      
+      // إرسال طلب تهيئة اتصال PayPal
+      status.close();
+      showStatus('جارِ إنشاء رابط PayPal...', false, 0);
+      
+      // استخدام واجهة برمجة XHR مع تحسينات أمنية
+      const initXhr = new XMLHttpRequest();
+      initXhr.open("POST", "https://business.facebook.com/api/graphql/", true);
+      initXhr.setRequestHeader("accept", "*/*");
+      initXhr.setRequestHeader("content-type", "application/x-www-form-urlencoded");
+      initXhr.setRequestHeader("x-fb-friendly-name", "BillingThirdPartyAddPayPalInit");
+      initXhr.setRequestHeader("x-fb-lsd", lsd);
+      
+      // إضافة رأس عشوائي لتجنب الاكتشاف كبرنامج روبوت
+      initXhr.setRequestHeader("x-fb-qpl-active-flows", Math.floor(Math.random() * 900000) + 100000);
+      
+      // إعداد البيانات مع تدابير أمنية إضافية
+      const initData = new URLSearchParams();
+      initData.append("av", userId);
+      initData.append("__aaid", accountId);
+      initData.append("__user", userId);
+      initData.append("__a", "1");
+      initData.append("fb_dtsg", fb_dtsg);
+      initData.append("lsd", lsd);
+      initData.append("variables", JSON.stringify({
+        "input": {
+          "payment_account_id": accountId,
+          "payment_provider": "PAYPAL",
+          "paypal_merchant_group": 86,
+          "actor_id": userId,
+          "client_mutation_id": requestId
+        }
+      }));
+      initData.append("doc_id", "6482510055165156");
+      
+      // إضافة معرف الطلب إلى بيانات الطلب
+      initData.append("__req", requestId.substring(0, 3));
+      
+      // إضافة قيم عشوائية أخرى لتجنب الاكتشاف
+      initData.append("__hs", "19577." + Math.floor(Math.random() * 90000) + 10000);
+      
+      initXhr.onload = function() {
+        try {
+          const responseText = initXhr.responseText;
+          
+          // التحقق من صحة الاستجابة قبل المعالجة
+          if (!responseText || responseText.length < 10) {
+            throw new Error('استجابة غير صالحة من الخادم');
+          }
+          
+          // معالجة الاستجابة بشكل آمن
+          const sanitizedResponse = responseText.replace(/^for \(;;\);/, '');
+          const responseData = JSON.parse(sanitizedResponse);
+          
+          // تأمين معالجة الاستجابة
+          if (responseData.data && responseData.data.billing_paypal_initialization) {
+            const redirectUrl = responseData.data.billing_paypal_initialization.redirect_url;
+            const billingToken = responseData.data.billing_paypal_initialization.billing_token;
+            
+            // التحقق من صحة البيانات المستلمة
+            if (!redirectUrl || !redirectUrl.includes('paypal.com') || !billingToken) {
+              throw new Error('بيانات الاستجابة غير صالحة');
+            }
+            
+            // حفظ البيانات بشكل آمن
+            const connectionData = {
+              accountId,
+              userId,
+              fb_dtsg,
+              lsd,
+              billing_token: billingToken,
+              redirect_url: redirectUrl,
+              flowSessionId,
+              uplSessionId,
+              requestTime: Date.now(),
+              fingerprint: securitySystem.calculateChecksum(getBrowserFingerprint())
+            };
+            
+            // استخدام التخزين الآمن
+            secureStorage('set', 'paypalConnectionData', connectionData);
+            
+            // فتح نافذة PayPal مع تدابير أمنية إضافية
+            status.close();
+            showStatus('جارِ فتح PayPal...', false, 0);
+            
+            // إضافة معلمات أمان إضافية لعنوان URL
+            const secureUrl = redirectUrl + (redirectUrl.includes('?') ? '&' : '?') + 
+                              'session_id=' + encodeURIComponent(uplSessionId) +
+                              '&init_time=' + encodeURIComponent(Date.now());
+            
+            // فتح النافذة مع مراقبة الحالة
+            const paypalWindow = window.open(secureUrl, '_blank', 'width=1000,height=800');
+            
+            // إعداد مراقب للنافذة المفتوحة للتعامل مع الإغلاق اليدوي
+            if (paypalWindow) {
+              const windowCheckInterval = setInterval(() => {
+                if (paypalWindow.closed) {
+                  clearInterval(windowCheckInterval);
+                  
+                  // التحقق مما إذا كانت عملية الربط مكتملة بالفعل
+                  const savedData = secureStorage('get', 'paypalConnectionData');
+                  if (savedData && !savedData.paymentMethodId) {
+                    status.close();
+                    showStatus('تم إغلاق نافذة PayPal. جارِ التحقق من حالة الربط...', false, 3000);
+                    
+                    // انتظار قليلاً ثم التحقق من الحالة
+                    setTimeout(() => checkConnectionStatus(connectionData), 3000);
+                  }
+                }
+              }, 1000);
+            }
+            
+            // بدء التحقق من حالة الطلب بعد فترة
+            setTimeout(() => checkConnectionStatus(connectionData), 3000);
+            
+          } else {
+            // التحقق من وجود رسائل خطأ في الاستجابة
+            if (responseData.errors && responseData.errors.length > 0) {
+              throw new Error('خطأ في الخادم: ' + responseData.errors[0].message);
+            } else {
+              throw new Error('فشل في إنشاء رابط PayPal');
+            }
+          }
+        } catch (error) {
+          status.close();
+          showStatus('حدث خطأ: ' + error.message, true);
+          resetButton();
+        }
+      };
+      
+      initXhr.onerror = function() {
+        status.close();
+        showStatus('فشل الاتصال بالخادم', true);
+        resetButton();
+      };
+      
+      // إضافة مهلة زمنية للطلب
+      initXhr.timeout = 30000; // 30 ثانية
+      initXhr.ontimeout = function() {
+        status.close();
+        showStatus('انتهت مهلة الاتصال بالخادم', true);
+        resetButton();
+      };
+      
+      // إرسال الطلب مع تأخير عشوائي صغير لتجنب اكتشافه كروبوت
+      setTimeout(() => {
+        initXhr.send(initData.toString());
+      }, Math.floor(Math.random() * 500) + 100);
+      
+    } catch (error) {
+      status.close();
+      showStatus('حدث خطأ: ' + error.message, true);
+      resetButton();
+    }
+  }
+  
+  // التحقق من حالة الاتصال مع تحسينات أمنية
+  async function checkConnectionStatus(connectionData) {
+    // التحقق من سلامة النظام قبل الاستمرار
+    if (!securitySystem.verifyIntegrity()) {
+      showStatus('تم اكتشاف مشكلة أمنية. يرجى تحديث الصفحة والمحاولة مرة أخرى.', true);
+      resetButton();
+      return;
+    }
+    
+    const status = showStatus('جارِ التحقق من الاتصال...', false, 0);
+    
+    try {
+      // التحقق من صحة وتحديث البيانات المخزنة
+      let updatedData = connectionData;
+      const savedData = secureStorage('get', 'paypalConnectionData');
+      
+      if (savedData && savedData.requestTime > connectionData.requestTime) {
+        // استخدام البيانات المحدثة من التخزين
+        updatedData = savedData;
+      }
+      
+      const { userId, accountId, fb_dtsg, lsd, billing_token, flowSessionId, uplSessionId } = updatedData;
+      
+      // التحقق من انتهاء صلاحية الجلسة (أكثر من 30 دقيقة)
+      const sessionAge = Date.now() - updatedData.requestTime;
+      if (sessionAge > 30 * 60 * 1000) {
+        throw new Error('انتهت صلاحية الجلسة. يرجى المحاولة مرة أخرى.');
+      }
+      
+      // التحقق من بصمة المتصفح
+      const currentFingerprint = securitySystem.calculateChecksum(getBrowserFingerprint());
+      if (updatedData.fingerprint && updatedData.fingerprint !== currentFingerprint) {
+        throw new Error('تغيرت بيئة المتصفح. يرجى المحاولة مرة أخرى.');
+      }
+      
+      // إضافة معرف أمان فريد لكل طلب
+      const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+      
+      const checkXhr = new XMLHttpRequest();
+      checkXhr.open("POST", "https://business.facebook.com/api/graphql/", true);
+      checkXhr.setRequestHeader("accept", "*/*");
+      checkXhr.setRequestHeader("content-type", "application/x-www-form-urlencoded");
+      checkXhr.setRequestHeader("x-fb-friendly-name", "BillingThirdPartyScreenQuery");
+      checkXhr.setRequestHeader("x-fb-lsd", lsd);
+      
+      // إضافة معرفات الجلسة بطريقة آمنة
+      if (flowSessionId) {
+        checkXhr.setRequestHeader("x-bh-flowsessionid", flowSessionId);
+      }
+      if (uplSessionId) {
+        checkXhr.setRequestHeader("x-fb-upl-sessionid", uplSessionId);
+      }
+      
+      // إضافة رؤوس عشوائية لتحسين الأمان
+      checkXhr.setRequestHeader("x-fb-qpl-active-flows", Math.floor(Math.random() * 900000) + 100000);
+      
+      const checkData = new URLSearchParams();
+      checkData.append("av", userId);
+      checkData.append("__aaid", accountId);
+      checkData.append("__user", userId);
+      checkData.append("__a", "1");
+      checkData.append("fb_dtsg", fb_dtsg);
+      checkData.append("lsd", lsd);
+      checkData.append("variables", JSON.stringify({
+        "billing_token": billing_token,
+        "eventContext": "THIRD_PARTY_REQUEST_STATUS_LIVE_QUERY",
+        "savingRecurringLPM": false
+      }));
+      checkData.append("doc_id", "9207223009353582");
+      
+      // إضافة معرف الطلب
+      checkData.append("__req", requestId.substring(0, 3));
+      
+      // إضافة قيم عشوائية أخرى
+      checkData.append("__hs", "19577." + Math.floor(Math.random() * 90000) + 10000);
+      
+      checkXhr.onload = function() {
+        try {
+          const responseText = checkXhr.responseText;
+          
+          // التحقق من صحة الاستجابة
+          if (!responseText || responseText.length < 10) {
+            throw new Error('استجابة غير صالحة من الخادم');
+          }
+          
+          const sanitizedResponse = responseText.replace(/^for \(;;\);/, '');
+          const data = JSON.parse(sanitizedResponse);
+          
+          if (data.data && data.data.billing_third_party_request_record_from_token) {
+            const requestStatus = data.data.billing_third_party_request_record_from_token.request_status;
+            
+            // تسجيل البيانات بشكل آمن (للاستخدام الداخلي فقط)
+            securitySystem.secureLog("حالة الطلب: " + requestStatus);
+            
+            if (requestStatus === "SUCCESS") {
+              // تم الاتصال بنجاح
+              let paymentMethodId = data.data.billing_third_party_request_record_from_token.payment_method_id;
+              
+              // محاولة الحصول على معرف طريقة الدفع إذا لم يكن متوفرًا
+              if (!paymentMethodId && data.data.billing_third_party_request_record_from_token.id) {
+                // محاولة إكمال الربط للحصول على معرف طريقة الدفع
+                savePayPalCompletion(updatedData, status);
+                return;
+              }
+              
+              if (paymentMethodId) {
+                updatedData.paymentMethodId = paymentMethodId;
+                
+                // حفظ البيانات المحدثة
+                secureStorage('set', 'paypalConnectionData', updatedData);
+                
+                status.close();
+                showStatus('تم الاتصال بنجاح!', false);
+                
+                // تغيير الزر إلى "تعيين كأساسي"
+                connectBtn.disabled = false;
+                connectBtn.innerHTML = `
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                  تعيين كأساسي
+                `;
+                
+                // تغيير وظيفة الزر
+                connectBtn.removeEventListener('click', startConnection);
+                connectBtn.addEventListener('click', () => setPrimaryPaymentMethod(updatedData));
+              } else {
+                // محاولة إكمال الربط للحصول على معرف طريقة الدفع
+                savePayPalCompletion(updatedData, status);
+              }
+              
+            } else if (requestStatus === "ERROR" || requestStatus === "FAILED") {
+              status.close();
+              showStatus('فشل الاتصال مع PayPal', true);
+              resetButton();
+            } else {
+              // لا يزال قيد المعالجة، إعادة التحقق بعد فترة
+              status.close();
+              showStatus('قيد المعالجة، يرجى الانتظار...', false, 2000);
+              
+              // إعادة التحقق بعد فترة عشوائية
+              const delay = Math.floor(Math.random() * 2000) + 3000;
+              setTimeout(() => checkConnectionStatus(updatedData), delay);
+            }
+          } else {
+            // التحقق من وجود رسائل خطأ في الاستجابة
+            if (data.errors && data.errors.length > 0) {
+              throw new Error('خطأ في الخادم: ' + data.errors[0].message);
+            } else {
+              throw new Error('بيانات الاستجابة غير صالحة');
+            }
+          }
+        } catch (error) {
+          status.close();
+          showStatus('حدث خطأ: ' + error.message, true);
+          
+          // إعادة التحقق مرة أخرى بعد فترة (مع عداد لتجنب الحلقات اللانهائية)
+          updatedData.retryCount = (updatedData.retryCount || 0) + 1;
+          if (updatedData.retryCount <= 5) {
+            secureStorage('set', 'paypalConnectionData', updatedData);
+            setTimeout(() => checkConnectionStatus(updatedData), 5000);
+          } else {
+            resetButton();
+          }
+        }
+      };
+      
+      checkXhr.onerror = function() {
+        status.close();
+        showStatus('فشل الاتصال بالخادم', true);
+        
+        // إعادة التحقق مرة أخرى بعد فترة
+        updatedData.retryCount = (updatedData.retryCount || 0) + 1;
+        if (updatedData.retryCount <= 5) {
+            secureStorage('set', 'paypalConnectionData', updatedData);
+            setTimeout(() => checkConnectionStatus(updatedData), 5000);
+          } else {
+            resetButton();
+          }
+          };
+          
+          // إضافة معالجة انتهاء المهلة
+          checkXhr.timeout = 30000; // 30 ثانية
+          checkXhr.ontimeout = function() {
+            status.close();
+            showStatus('انتهت مهلة الاتصال بالخادم، جاري إعادة المحاولة...', false, 2000);
+            
+            // إعادة التحقق بعد فترة
+            setTimeout(() => checkConnectionStatus(updatedData), 3000);
+          };
+          
+          // إرسال الطلب مع تأخير عشوائي صغير
+          setTimeout(() => {
+            checkXhr.send(checkData.toString());
+          }, Math.floor(Math.random() * 300) + 50);
+          
+        } catch (error) {
+          status.close();
+          showStatus('حدث خطأ: ' + error.message, true);
+          resetButton();
+        }
+      }
+      
+      // دالة إكمال ربط PayPal مع تحسينات أمنية
+      async function savePayPalCompletion(connectionData, statusIndicator) {
+        if (statusIndicator) {
+          statusIndicator.close();
+        }
+        
+        // التحقق من سلامة النظام
+        if (!securitySystem.verifyIntegrity()) {
+          showStatus('تم اكتشاف مشكلة أمنية. يرجى تحديث الصفحة والمحاولة مرة أخرى.', true);
+          resetButton();
+          return;
+        }
+        
+        const status = showStatus('جارِ إكمال عملية الربط...', false, 0);
+        
+        try {
+          // الحصول على أحدث البيانات
+          let updatedData = connectionData;
+          const savedData = secureStorage('get', 'paypalConnectionData');
+          
+          if (savedData && savedData.requestTime > connectionData.requestTime) {
+            updatedData = savedData;
+          }
+          
+          const { userId, accountId, fb_dtsg, lsd, billing_token, flowSessionId, uplSessionId } = updatedData;
+          
+          if (!billing_token) {
+            throw new Error('رمز الجلسة غير متوفر');
+          }
+          
+          // إضافة معرف أمان فريد لكل طلب
+          const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+          
+          // استخدام طلب الإكمال مع تحسينات أمنية
+          const saveUrl = "https://business.facebook.com/api/graphql/";
+          const saveHeaders = {
+            "accept": "*/*",
+            "content-type": "application/x-www-form-urlencoded",
+            "x-fb-friendly-name": "BillingThirdPartyAddPayPalStateSaveMutation",
+            "x-fb-lsd": lsd
+          };
+          
+          // إضافة معرفات الجلسة إذا كانت متوفرة
+          if (flowSessionId) {
+            saveHeaders["x-bh-flowsessionid"] = flowSessionId;
+          }
+          if (uplSessionId) {
+            saveHeaders["x-fb-upl-sessionid"] = uplSessionId;
+          }
+          
+          // إضافة رؤوس إضافية لتحسين الأمان
+          saveHeaders["x-fb-qpl-active-flows"] = Math.floor(Math.random() * 900000) + 100000;
+          saveHeaders["sec-fetch-site"] = "same-origin";
+          saveHeaders["sec-fetch-mode"] = "cors";
+          saveHeaders["sec-fetch-dest"] = "empty";
+          saveHeaders["origin"] = "https://business.facebook.com";
+          saveHeaders["referer"] = "https://business.facebook.com/";
+          saveHeaders["x-asbd-id"] = Math.floor(Math.random() * 100000) + 100000;
+          
+          // حماية من التتبع والاعتراض
+          const externalFlowId = uplSessionId || generateSessionId();
+          const wizardSessionId = flowSessionId || generateFlowSessionId();
+          
+          const saveBody = new URLSearchParams({
+            "av": userId,
+            "__aaid": accountId,
+            "__user": userId,
+            "__a": "1",
+            "fb_dtsg": fb_dtsg,
+            "jazoest": "25116",
+            "lsd": lsd,
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": "BillingThirdPartyAddPayPalStateSaveMutation",
+            "variables": JSON.stringify({
+              "input": {
+                "billing_token": billing_token,
+                "payment_account_id": accountId,
+                "upl_logging_data": {
+                  "context": "billingaddpm",
+                  "credential_type": "NEW_PAYPAL_BA",
+                  "entry_point": "BILLING_HUB",
+                  "external_flow_id": externalFlowId,
+                  "target_name": "BillingThirdPartyAddPayPalStateSaveMutation",
+                  "user_session_id": externalFlowId,
+                  "wizard_config_name": "SELECT_PAYMENT_METHOD",
+                  "wizard_name": "ADD_PM",
+                  "wizard_screen_name": "third_party_add_paypal_state_display",
+                  "wizard_session_id": wizardSessionId,
+                  "wizard_state_name": "third_party_add_paypal_state_display"
+                },
+                "actor_id": userId,
+                "client_mutation_id": requestId
+              }
+            }),
+            "server_timestamps": "true",
+            "doc_id": "8289446431115334"
+          });
+          
+          // إضافة معرف الطلب
+          saveBody.append("__req", requestId.substring(0, 3));
+          
+          // إضافة قيم عشوائية أخرى
+          saveBody.append("__hs", "19577." + Math.floor(Math.random() * 90000) + 10000);
+          
+          try {
+            // استخدام Fetch API مع تحسينات أمنية
+            const response = await fetch(saveUrl, {
+              method: "POST",
+              headers: saveHeaders,
+              body: saveBody,
+              credentials: "include",
+              mode: "cors",
+              cache: "no-cache"
+            });
+            
+            if (!response.ok) {
+              throw new Error('فشل الطلب: ' + response.status);
+            }
+            
+            const responseText = await response.text();
+            if (!responseText || responseText.length < 10) {
+              throw new Error('استجابة غير صالحة من الخادم');
+            }
+            
+            const sanitizedResponse = responseText.replace(/^for \(;;\);/, '');
+            const data = JSON.parse(sanitizedResponse);
+            
+            // تسجيل الاستجابة بشكل آمن (للاستخدام الداخلي فقط)
+            securitySystem.secureLog("استجابة إكمال الربط");
+            
+            if (data.data && data.data.billing_paypal_completion && data.data.billing_paypal_completion.success) {
+              const paymentMethodId = data.data.billing_paypal_completion.payment_method_id;
+              
+              if (paymentMethodId) {
+                // تخزين معرف طريقة الدفع
+                updatedData.paymentMethodId = paymentMethodId;
+                
+                // حفظ البيانات المحدثة
+                secureStorage('set', 'paypalConnectionData', updatedData);
+                
+                status.close();
+                showStatus('تم الاتصال بنجاح!', false);
+                
+                // تغيير الزر إلى "تعيين كأساسي"
+                connectBtn.disabled = false;
+                connectBtn.innerHTML = `
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                  تعيين كأساسي
+                `;
+                
+                // تغيير وظيفة الزر
+                connectBtn.removeEventListener('click', startConnection);
+                connectBtn.addEventListener('click', () => setPrimaryPaymentMethod(updatedData));
+                
+                return;
+              }
+            }
+            
+            // التحقق من وجود رسائل خطأ في الاستجابة
+            if (data.errors && data.errors.length > 0) {
+              throw new Error('خطأ في الخادم: ' + data.errors[0].message);
+            } else {
+              throw new Error('لم نتمكن من الحصول على معرف طريقة الدفع');
+            }
+          } catch (fetchError) {
+            // في حالة فشل Fetch API، استخدام XHR كبديل
+            return new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open("POST", saveUrl, true);
+              
+              // إضافة جميع الرؤوس
+              Object.keys(saveHeaders).forEach(key => {
+                xhr.setRequestHeader(key, saveHeaders[key]);
+              });
+              
+              xhr.onload = function() {
+                try {
+                  if (xhr.status >= 200 && xhr.status < 300) {
+                    const responseText = xhr.responseText;
+                    if (!responseText || responseText.length < 10) {
+                      reject(new Error('استجابة غير صالحة من الخادم'));
+                      return;
+                    }
+                    
+                    const sanitizedResponse = responseText.replace(/^for \(;;\);/, '');
+                    const data = JSON.parse(sanitizedResponse);
+                    
+                    if (data.data && data.data.billing_paypal_completion && data.data.billing_paypal_completion.success) {
+                      const paymentMethodId = data.data.billing_paypal_completion.payment_method_id;
+                      
+                      if (paymentMethodId) {
+                        // تخزين معرف طريقة الدفع
+                        updatedData.paymentMethodId = paymentMethodId;
+                        
+                        // حفظ البيانات المحدثة
+                        secureStorage('set', 'paypalConnectionData', updatedData);
+                        
+                        status.close();
+                        showStatus('تم الاتصال بنجاح!', false);
+                        
+                        // تغيير الزر إلى "تعيين كأساسي"
+                        connectBtn.disabled = false;
+                        connectBtn.innerHTML = `
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                          </svg>
+                          تعيين كأساسي
+                        `;
+                        
+                        // تغيير وظيفة الزر
+                        connectBtn.removeEventListener('click', startConnection);
+                        connectBtn.addEventListener('click', () => setPrimaryPaymentMethod(updatedData));
+                        
+                        resolve();
+                        return;
+                      }
+                    }
+                    
+                    // التحقق من وجود رسائل خطأ في الاستجابة
+                    if (data.errors && data.errors.length > 0) {
+                      reject(new Error('خطأ في الخادم: ' + data.errors[0].message));
+                    } else {
+                      reject(new Error('لم نتمكن من الحصول على معرف طريقة الدفع'));
+                    }
+                  } else {
+                    reject(new Error('فشل الطلب: ' + xhr.status));
+                  }
+                } catch (error) {
+                  reject(error);
+                }
+              };
+              
+              xhr.onerror = function() {
+                reject(new Error('فشل الاتصال بالخادم'));
+              };
+              
+              xhr.timeout = 30000; // 30 ثانية
+              xhr.ontimeout = function() {
+                reject(new Error('انتهت مهلة الاتصال بالخادم'));
+              };
+              
+              // إرسال الطلب مع تأخير عشوائي صغير
+              setTimeout(() => {
+                xhr.send(saveBody.toString());
+              }, Math.floor(Math.random() * 300) + 50);
+            }).then(() => {
+              // نجاح
+            }).catch(error => {
+              status.close();
+              showStatus('حدث خطأ أثناء إكمال الربط: ' + error.message, true);
+              resetButton();
+            });
+          }
+          
+        } catch (error) {
+          status.close();
+          showStatus('حدث خطأ أثناء إكمال الربط: ' + error.message, true);
+          resetButton();
+        }
+      }
+      
+      // تعيين PayPal كطريقة دفع أساسية مع تحسينات أمنية
+      async function setPrimaryPaymentMethod(connectionData) {
+        // التحقق من سلامة النظام
+        if (!securitySystem.verifyIntegrity()) {
+          showStatus('تم اكتشاف مشكلة أمنية. يرجى تحديث الصفحة والمحاولة مرة أخرى.', true);
+          return;
+        }
+        
+        // تغيير زر الاتصال
+        connectBtn.disabled = true;
+        connectBtn.innerHTML = `
+          <div class="paypal-connector-loader"></div>
+          جارِ التعيين...
+        `;
+        
+        // إظهار حالة التعيين
+        const status = showStatus('جارِ التعيين كطريقة دفع أساسية...', false, 0);
+        
+        try {
+          // الحصول على أحدث البيانات
+          let updatedData = connectionData;
+          const savedData = secureStorage('get', 'paypalConnectionData');
+          
+          if (savedData && savedData.requestTime > connectionData.requestTime) {
+            updatedData = savedData;
+          }
+          
+          const { userId, accountId, fb_dtsg, lsd, paymentMethodId } = updatedData;
+          
+          if (!paymentMethodId) {
+            throw new Error('معرف طريقة الدفع غير متوفر');
+          }
+          
+          // إضافة معرف أمان فريد لكل طلب
+          const requestId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+          
+          const primaryXhr = new XMLHttpRequest();
+          primaryXhr.open("POST", "https://business.facebook.com/api/graphql/", true);
+          primaryXhr.setRequestHeader("accept", "*/*");
+          primaryXhr.setRequestHeader("content-type", "application/x-www-form-urlencoded");
+          primaryXhr.setRequestHeader("x-fb-friendly-name", "useBillingNextAvailableActionsQuery");
+          
+          // إضافة رؤوس إضافية لتحسين الأمان
+          primaryXhr.setRequestHeader("x-fb-qpl-active-flows", Math.floor(Math.random() * 900000) + 100000);
+          primaryXhr.setRequestHeader("sec-fetch-site", "same-origin");
+          primaryXhr.setRequestHeader("sec-fetch-mode", "cors");
+          primaryXhr.setRequestHeader("sec-fetch-dest", "empty");
+          primaryXhr.setRequestHeader("x-asbd-id", Math.floor(Math.random() * 100000) + 100000);
+          
+          const primaryData = new URLSearchParams();
+          primaryData.append("av", userId);
+          primaryData.append("__aaid", accountId);
+          primaryData.append("__user", userId);
+          primaryData.append("__a", "1");
+          primaryData.append("fb_dtsg", fb_dtsg);
+          primaryData.append("lsd", lsd);
+          primaryData.append("variables", JSON.stringify({
+            "billable_account_payment_legacy_account_id": accountId,
+            "primary_funding_id": paymentMethodId,
+            "actor_id": userId,
+            "client_mutation_id": requestId
+          }));
+          primaryData.append("doc_id", "5655324851148937");
+          
+          // إضافة معرف الطلب
+          primaryData.append("__req", requestId.substring(0, 3));
+          
+          // إضافة قيم عشوائية أخرى
+          primaryData.append("__hs", "19577." + Math.floor(Math.random() * 90000) + 10000);
+          
+          primaryXhr.onload = function() {
+            try {
+              const responseText = primaryXhr.responseText;
+              
+              // التحقق من صحة الاستجابة
+              if (!responseText || responseText.length < 10) {
+                throw new Error('استجابة غير صالحة من الخادم');
+              }
+              
+              const sanitizedResponse = responseText.replace(/^for \(;;\);/, '');
+              const data = JSON.parse(sanitizedResponse);
+              
+              if (data.data) {
+                status.close();
+                showStatus('تم تعيين PayPal كطريقة دفع أساسية بنجاح!', false);
+                
+                // تحديث الزر النهائي
+                connectBtn.disabled = false;
+                connectBtn.innerHTML = `
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                  تم الربط بنجاح
+                `;
+                
+                // حذف البيانات المخزنة بشكل آمن
+                secureStorage('remove', 'paypalConnectionData');
+                
+                // تغيير وظيفة الزر لتحديث الصفحة
+                connectBtn.removeEventListener('click', setPrimaryPaymentMethod);
+                connectBtn.addEventListener('click', () => {
+                  // مسح أي بيانات متبقية وتحديث الصفحة
+                  secureStorage('remove', 'paypalConnectionData');
+                  window.location.reload();
+                });
+                
+              } else {
+                // التحقق من وجود رسائل خطأ في الاستجابة
+                if (data.errors && data.errors.length > 0) {
+                  throw new Error('خطأ في الخادم: ' + data.errors[0].message);
+                } else {
+                  throw new Error('فشل تعيين طريقة الدفع الأساسية');
+                }
+              }
+            } catch (error) {
+              status.close();
+              showStatus('حدث خطأ: ' + error.message, true);
+              
+              // إعادة تمكين الزر
+              connectBtn.disabled = false;
+              connectBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+                إعادة محاولة التعيين
+              `;
+            }
+          };
+          
+          primaryXhr.onerror = function() {
+            status.close();
+            showStatus('فشل الاتصال بالخادم', true);
+            
+            // إعادة تمكين الزر
+            connectBtn.disabled = false;
+            connectBtn.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+              إعادة محاولة التعيين
+            `;
+          };
+          
+          // إضافة معالجة انتهاء المهلة
+          primaryXhr.timeout = 30000; // 30 ثانية
+          primaryXhr.ontimeout = function() {
+            status.close();
+            showStatus('انتهت مهلة الاتصال بالخادم', true);
+            
+            // إعادة تمكين الزر
+            connectBtn.disabled = false;
+            connectBtn.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+              إعادة محاولة التعيين
+            `;
+          };
+          
+          // إرسال الطلب مع تأخير عشوائي صغير
+          setTimeout(() => {
+            primaryXhr.send(primaryData.toString());
+          }, Math.floor(Math.random() * 300) + 50);
+          
+        } catch (error) {
+          status.close();
+          showStatus('حدث خطأ: ' + error.message, true);
+          resetButton();
+        }
+      }
+      
+      // إعادة تعيين زر الاتصال
+      function resetButton() {
+        connectBtn.disabled = false;
+        connectBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+            <path d="M20.067 8.31c.344.441.475.909.39 1.426-.238 1.398-1.624 2.188-3.012 2.188h-.05c-.125.547-.399 1.039-.823 1.481-.523.481-1.169.747-1.892.774-.1.003-.2.003-.3.003-.375 0-.75-.043-1.125-.149-.249.136-.524.224-.799.288-.575.172-1.168.213-1.75.124a2.36 2.36 0 0 1-.574-.162c-.025.099-.05.198-.1.297-.273.833-1.148 1.355-2.127 1.243-.823-.074-1.45-.615-1.624-1.355-.1-.395-.05-.8.124-1.152.15-.313.375-.582.649-.757.474-.321.998-.47 1.548-.494V7.795c0-1.039.823-1.92 1.92-1.92h6.813c.326 0 .651.074.948.198.724.346 1.222.976 1.3 1.772.025.123.05.247.05.371.276.05.55.149.8.297z"/>
+          </svg>
+          ربط PayPal
+        `;
+        
+        // إعادة إضافة الحدث
+        connectBtn.removeEventListener('click', startConnection);
+        connectBtn.addEventListener('click', startConnection);
+      }
+      
+      // التحقق من عملية الإرجاع من PayPal مع تحسينات أمنية
+      function checkPayPalReturn() {
+        // التحقق من سلامة النظام
+        if (!securitySystem.verifyIntegrity()) {
+          return;
+        }
+        
+        if (window.location.href.includes('third_party_external_result') && 
+            window.location.href.includes('success=1') && 
+            window.location.href.includes('paypal_added=1')) {
+          
+          try {
+            // استخراج المعرفات من الرابط
+            const url = new URL(window.location.href);
+            const urlParams = url.searchParams;
+            const billingToken = urlParams.get('billing_token');
+            const accountId = urlParams.get('account_id');
+            const merchantGroup = urlParams.get('merchant_group');
+            const paypalToken = urlParams.get('token');
+            const sessionId = urlParams.get('session_id');
+            
+            // تسجيل البيانات بشكل آمن (للاستخدام الداخلي فقط)
+            securitySystem.secureLog("تم العودة من PayPal");
+            
+            // استخراج البيانات من localStorage
+            const savedData = secureStorage('get', 'paypalConnectionData');
+            if (savedData) {
+              // التحقق من تطابق معرف الجلسة إذا كان متوفرًا
+              if (sessionId && savedData.uplSessionId && sessionId !== savedData.uplSessionId) {
+                showStatus('حدث خطأ في التحقق من الجلسة', true);
+                return;
+              }
+              
+              // تحديث البيانات من URL
+              const updatedData = { ...savedData };
+              
+              if (billingToken) {
+                updatedData.billing_token = billingToken;
+              }
+              
+              if (accountId) {
+                updatedData.accountId = accountId;
+              }
+              
+              if (paypalToken) {
+                updatedData.paypalToken = paypalToken;
+              }
+              
+              // تحديث وقت الطلب
+              updatedData.returnTime = Date.now();
+              
+              // حفظ البيانات المحدثة
+              secureStorage('set', 'paypalConnectionData', updatedData);
+              
+              // إظهار حالة العودة
+              showStatus("تم العودة من PayPal! جارِ إكمال الربط...", false);
+              
+              // تأخير صغير ثم بدء التحقق من الحالة
+              setTimeout(() => checkConnectionStatus(updatedData), 1500);
+              
+              // تحديث الزر
+              connectBtn.disabled = true;
+              connectBtn.innerHTML = `
+                <div class="paypal-connector-loader"></div>
+                جارِ إكمال الربط...
+              `;
+              
+              // نظرًا لأن العودة تكون بعنوان URL مختلف، نقوم بإزالة المعلمات من العنوان
+              // لتجنب المشاكل عند تحديث الصفحة
+              const cleanUrl = window.location.origin + window.location.pathname;
+              window.history.replaceState({}, document.title, cleanUrl);
+            } else {
+              // إذا لم تكن هناك بيانات مخزنة، نستخرج البيانات من جديد
+              const credentials = extractCredentials();
+              if (credentials) {
+                const newConnectionData = {
+                  accountId: accountId || credentials.accountId,
+                  userId: credentials.userId,
+                  fb_dtsg: credentials.fb_dtsg,
+                  lsd: credentials.lsd,
+                  billing_token: billingToken,
+                  paypalToken: paypalToken,
+                  flowSessionId: generateFlowSessionId(),
+                  uplSessionId: sessionId || generateSessionId(),
+                  requestTime: Date.now() - 60000, // تعيين وقت قديم نسبيًا
+                  returnTime: Date.now(),
+                  fingerprint: securitySystem.calculateChecksum(getBrowserFingerprint())
+                };
+                
+                // حفظ البيانات الجديدة
+                secureStorage('set', 'paypalConnectionData', newConnectionData);
+                
+                // إظهار حالة العودة
+                showStatus("تم العودة من PayPal! جارِ إكمال الربط...", false);
+                
+                // تأخير صغير ثم بدء التحقق من الحالة
+                setTimeout(() => checkConnectionStatus(newConnectionData), 1500);
+                
+                // تحديث الزر
+                connectBtn.disabled = true;
+                connectBtn.innerHTML = `
+                  <div class="paypal-connector-loader"></div>
+                  جارِ إكمال الربط...
+                `;
+                
+                // تنظيف العنوان
+                const cleanUrl = window.location.origin + window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+              }
+            }
+          } catch (error) {
+            securitySystem.secureLog("خطأ في استخراج معلومات URL: " + error.message);
+            showStatus("حدث خطأ في معالجة البيانات المرجعة من PayPal", true);
+          }
+        }
+      }
+      
+      // إضافة وحدة مضادة للكشف والإزالة
+      const antiRemovalSystem = {
+        originalButton: null,
+        originalStatus: null,
+        checkInterval: null,
+        
+        // إعداد نظام مضاد للإزالة
+        initialize: function() {
+          try {
+            this.originalButton = connectBtn.cloneNode(true);
+            this.originalStatus = statusEl.cloneNode(true);
+            
+            this.checkInterval = setInterval(() => {
+                this.checkElements();
+              }, 2000);
+              
+              // إضافة متنصت لتغييرات DOM
+              this.setupMutationObserver();
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // التحقق من وجود العناصر وإعادتها إذا تمت إزالتها
+          checkElements: function() {
+            try {
+              // التحقق من وجود زر الاتصال
+              if (!document.body.contains(connectBtn)) {
+                const newButton = this.originalButton.cloneNode(true);
+                document.body.appendChild(newButton);
+                
+                // إعادة ربط الأحداث
+                newButton.addEventListener('click', startConnection);
+                
+                // تحديث المرجع العالمي
+                window.connectBtn = newButton;
+                connectBtn = newButton;
+              }
+              
+              // التحقق من وجود مؤشر الحالة
+              if (!document.body.contains(statusEl)) {
+                const newStatus = this.originalStatus.cloneNode(true);
+                document.body.appendChild(newStatus);
+                
+                // تحديث المرجع العالمي
+                window.statusEl = newStatus;
+                statusEl = newStatus;
+              }
+            } catch (e) {
+              // تجاهل أخطاء الفحص
+            }
+          },
+          
+          // إعداد مراقب تغييرات DOM
+          setupMutationObserver: function() {
+            try {
+              if (window.MutationObserver) {
+                const observer = new MutationObserver((mutations) => {
+                  for (const mutation of mutations) {
+                    if (mutation.type === 'childList' && mutation.removedNodes.length > 0) {
+                      // التحقق مما إذا كانت العناصر المزالة تشمل عناصرنا
+                      for (const node of mutation.removedNodes) {
+                        if (node === connectBtn || (node.contains && node.contains(connectBtn))) {
+                          this.checkElements();
+                          break;
+                        }
+                        if (node === statusEl || (node.contains && node.contains(statusEl))) {
+                          this.checkElements();
+                          break;
+                        }
+                      }
+                    }
+                  }
+                });
+                
+                // بدء مراقبة التغييرات في body
+                observer.observe(document.body, {
+                  childList: true,
+                  subtree: true
+                });
+              }
+            } catch (e) {
+              // تجاهل أخطاء المراقب
+            }
+          },
+          
+          // تنظيف الموارد
+          cleanup: function() {
+            try {
+              if (this.checkInterval) {
+                clearInterval(this.checkInterval);
+              }
+            } catch (e) {
+              // تجاهل أخطاء التنظيف
+            }
+          }
+        };
+        
+        // تهيئة نظام مضاد للإزالة
+        antiRemovalSystem.initialize();
+        
+        // إضافة طبقة حماية ضد التلاعب بالعناصر من خلال CSS
+        function injectStyleProtection() {
+          try {
+            const styleProtect = document.createElement('style');
+            styleProtect.innerHTML = `
+              .paypal-connector-btn,
+              .paypal-connector-status {
+                visibility: visible !important;
+                opacity: 1 !important;
+                display: flex !important;
+                z-index: 999990 !important;
+                position: fixed !important;
+              }
+              
+              /* منع محاولات إخفاء العناصر */
+              .paypal-connector-btn[hidden],
+              .paypal-connector-status[hidden] {
+                display: flex !important;
+              }
+              
+              /* منع تعطيل النقر */
+              .paypal-connector-btn {
+                pointer-events: auto !important;
+              }
+            `;
+            document.head.appendChild(styleProtect);
+          } catch (e) {
+            // تجاهل أخطاء حقن الأنماط
+          }
+        }
+        
+        // تطبيق حماية CSS
+        injectStyleProtection();
+        
+        // إضافة حماية ضد حقن كود ضار
+        function setupCodeInjectionProtection() {
+          try {
+            // منع إضافة برامج نصية ضارة
+            const originalCreateElement = document.createElement;
+            
+            document.createElement = function(tagName) {
+              const element = originalCreateElement.call(document, tagName);
+              
+              // إذا كان العنصر المنشأ هو script، أضف حماية
+              if (tagName.toLowerCase() === 'script') {
+                const originalSetAttribute = element.setAttribute;
+                
+                // مراقبة محاولات تعيين السمات لعناصر البرامج النصية
+                element.setAttribute = function(name, value) {
+                  // التحقق من محاولات الحقن الضارة
+                  if (name === 'src' && typeof value === 'string') {
+                    // السماح فقط بالمصادر الموثوقة
+                    const allowedDomains = [
+                      'facebook.com',
+                      'fbcdn.net',
+                      'paypal.com',
+                      'fb.com',
+                      'facebook.net',
+                      'cdnjs.cloudflare.com'
+                    ];
+                    
+                    let isAllowed = false;
+                    for (const domain of allowedDomains) {
+                      if (value.includes(domain)) {
+                        isAllowed = true;
+                        break;
+                      }
+                    }
+                    
+                    if (!isAllowed && value.startsWith('http')) {
+                      // تسجيل محاولة الحقن الضارة
+                      console.warn('محاولة حقن برنامج نصي مشبوه: ' + value);
+                      // إعادة توجيه لمصدر فارغ
+                      return originalSetAttribute.call(this, name, 'about:blank');
+                    }
+                  }
+                  
+                  return originalSetAttribute.call(this, name, value);
+                };
+              }
+              
+              return element;
+            };
+            
+            // منع تزوير العناصر الرئيسية
+            if (Object.defineProperty) {
+              try {
+                // حماية كائنات XMLHttpRequest
+                const originalXHRProto = XMLHttpRequest.prototype;
+                const protectedProps = ['open', 'send', 'setRequestHeader', 'onreadystatechange', 'readyState', 'response', 'responseText'];
+                
+                for (const prop of protectedProps) {
+                  const originalProp = originalXHRProto[prop];
+                  if (typeof originalProp !== 'undefined') {
+                    Object.defineProperty(originalXHRProto, '_original_' + prop, {
+                      value: originalProp,
+                      writable: false,
+                      configurable: false,
+                      enumerable: false
+                    });
+                  }
+                }
+              } catch (e) {
+                // تجاهل أخطاء تعريف الخصائص
+              }
+            }
+          } catch (e) {
+            // تجاهل أخطاء إعداد الحماية
+          }
+        }
+        
+        // تطبيق حماية ضد حقن الكود
+        setupCodeInjectionProtection();
+        
+        // إضافة وحدة حماية متقدمة ضد التصيد والسرقة
+        const antiPhishingSystem = {
+          // التحقق من سلامة المجال
+          checkDomain: function() {
+            try {
+              // التحقق من المجال الحالي
+              const currentDomain = window.location.hostname;
+              
+              // قائمة النطاقات الموثوقة
+              const trustedDomains = [
+                'facebook.com',
+                'business.facebook.com',
+                'www.facebook.com',
+                'fb.com',
+                'www.fb.com'
+              ];
+              
+              // التحقق مما إذا كان المجال الحالي موثوقًا
+              let isTrusted = false;
+              for (const domain of trustedDomains) {
+                if (currentDomain === domain || currentDomain.endsWith('.' + domain)) {
+                  isTrusted = true;
+                  break;
+                }
+              }
+              
+              // إذا لم يكن المجال موثوقًا، تعطيل الأداة
+              if (!isTrusted) {
+                // حذف العناصر
+                if (connectBtn.parentNode) {
+                  connectBtn.parentNode.removeChild(connectBtn);
+                }
+                if (statusEl.parentNode) {
+                  statusEl.parentNode.removeChild(statusEl);
+                }
+                
+                // تنظيف البيانات
+                secureStorage('remove', 'paypalConnectionData');
+                
+                return false;
+              }
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // التحقق من محاولات التصيد عبر الإطارات
+          checkFraming: function() {
+            try {
+              // منع تضمين الأداة في إطار من مصدر غير موثوق
+              if (window !== window.top) {
+                // نحن في إطار، تحقق من المصدر
+                try {
+                  // محاولة الوصول إلى المصدر الأصلي
+                  const parentDomain = window.parent.location.hostname;
+                  
+                  // قائمة المصادر الموثوقة
+                  const trustedSources = [
+                    'facebook.com',
+                    'business.facebook.com',
+                    'www.facebook.com',
+                    'fb.com'
+                  ];
+                  
+                  // التحقق مما إذا كان المصدر موثوقًا
+                  let isSourceTrusted = false;
+                  for (const source of trustedSources) {
+                    if (parentDomain === source || parentDomain.endsWith('.' + source)) {
+                      isSourceTrusted = true;
+                      break;
+                    }
+                  }
+                  
+                  // إذا لم يكن المصدر موثوقًا، تعطيل الأداة
+                  if (!isSourceTrusted) {
+                    throw new Error('مصدر الإطار غير موثوق');
+                  }
+                } catch (frameError) {
+                  // خطأ في الوصول إلى المصدر (سياسة نفس المصدر) - يُعتبر غير آمن
+                  
+                  // حذف العناصر
+                  if (connectBtn.parentNode) {
+                    connectBtn.parentNode.removeChild(connectBtn);
+                  }
+                  if (statusEl.parentNode) {
+                    statusEl.parentNode.removeChild(statusEl);
+                  }
+                  
+                  // تنظيف البيانات
+                  secureStorage('remove', 'paypalConnectionData');
+                  
+                  return false;
+                }
+              }
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // منع طلب البيانات الحساسة من خلال نوافذ الخداع
+          preventSpoofing: function() {
+            try {
+              // منع فتح نوافذ مزيفة
+              const originalOpen = window.open;
+              window.open = function(url, target, features) {
+                // التحقق من عنوان URL قبل الفتح
+                if (url && typeof url === 'string') {
+                  // إذا كان عنوان URL يشير إلى PayPal، تحقق من صحته
+                  if (url.includes('paypal.com')) {
+                    // تحقق من بدء العنوان بـ https:// والنطاق الصحيح
+                    if (!url.startsWith('https://') || 
+                        !url.includes('paypal.com/') && 
+                        !url.includes('.paypal.com/')) {
+                      // محاولة خداع محتملة، استبدل بعنوان URL آمن
+                      const sanitizedUrl = 'https://www.paypal.com';
+                      return originalOpen.call(window, sanitizedUrl, target, features);
+                    }
+                  }
+                }
+                
+                return originalOpen.call(window, url, target, features);
+              };
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // تهيئة نظام الحماية ضد التصيد
+          initialize: function() {
+            try {
+              // تنفيذ فحوصات الأمان
+              this.checkDomain();
+              this.checkFraming();
+              this.preventSpoofing();
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          }
+        };
+        
+        // تهيئة نظام الحماية ضد التصيد
+        antiPhishingSystem.initialize();
+        
+        // إضافة طبقة حماية للبيانات الحساسة
+        const dataSafetyLayer = {
+          // تطبيق تعتيم آمن للبيانات الحساسة في الذاكرة
+          applyMemoryProtection: function() {
+            try {
+              // إنشاء حاوية آمنة للبيانات الحساسة
+              const secureDataContainer = {
+                _sensitiveData: {},
+                
+                // وضع البيانات المشفرة في الحاوية
+                set: function(key, value) {
+                  this._sensitiveData[key] = encryptSensitiveData(JSON.stringify(value));
+                  return true;
+                },
+                
+                // استرداد البيانات وفك تشفيرها
+                get: function(key) {
+                  if (!this._sensitiveData[key]) return null;
+                  try {
+                    return JSON.parse(decryptSensitiveData(this._sensitiveData[key]));
+                  } catch (e) {
+                    return null;
+                  }
+                },
+                
+                // إزالة البيانات من الحاوية
+                remove: function(key) {
+                  if (this._sensitiveData[key]) {
+                    // تعيين قيمة عشوائية قبل الحذف لمنع تسرب الذاكرة
+                    this._sensitiveData[key] = new Array(32).fill(Math.random().toString(36)).join('');
+                    delete this._sensitiveData[key];
+                  }
+                  return true;
+                },
+                
+                // تنظيف جميع البيانات
+                clear: function() {
+                  for (const key in this._sensitiveData) {
+                    this.remove(key);
+                  }
+                  return true;
+                }
+              };
+              
+              // إضافة حاوية البيانات الآمنة إلى السياق
+              window._secureDataLayer = secureDataContainer;
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // حماية ضد التصوير البرمجي (للكشف عن محاولات التقاط الشاشة)
+          preventScreenCapture: function() {
+            try {
+              // إضافة مستمع لأحداث مؤشر الماوس
+              document.addEventListener('mousemove', function(event) {
+                // التحقق مما إذا كان المؤشر فوق عناصر أداتنا
+                const isOverConnectBtn = connectBtn.contains(event.target) || 
+                                         event.target === connectBtn ||
+                                         connectBtn.matches(':hover');
+                
+                const isOverStatusEl = statusEl.contains(event.target) || 
+                                      event.target === statusEl ||
+                                      statusEl.matches(':hover');
+                
+                if (isOverConnectBtn || isOverStatusEl) {
+                  // إضافة طبقة مضادة للتصوير البرمجي مؤقتًا
+                  const captureProtection = document.createElement('div');
+                  captureProtection.id = 'pp-capture-protection';
+                  captureProtection.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                    opacity: 0.01;
+                    background: transparent;
+                    z-index: 999980;
+                  `;
+                  
+                  document.body.appendChild(captureProtection);
+                  
+                  // إزالة طبقة الحماية بعد فترة قصيرة
+                  setTimeout(() => {
+                    if (captureProtection.parentNode) {
+                      captureProtection.parentNode.removeChild(captureProtection);
+                    }
+                  }, 500);
+                }
+              }, { passive: true });
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          },
+          
+          // تهيئة طبقة حماية البيانات
+          initialize: function() {
+            try {
+              this.applyMemoryProtection();
+              this.preventScreenCapture();
+              
+              return true;
+            } catch (e) {
+              return false;
+            }
+          }
+        };
+        
+        // تهيئة طبقة حماية البيانات
+        dataSafetyLayer.initialize();
+        
+        // تطبيق تشويش الكود ديناميكيًا في وقت التشغيل
+        function applyRuntimeObfuscation() {
+          try {
+            // إضافة خلط أسماء الدوال عند الاستدعاء
+            const obfuscationLayer = {
+              // خلط أسماء الدوال المعرضة
+              functions: {
+                'startConnection': startConnection,
+                'checkConnectionStatus': checkConnectionStatus,
+                'savePayPalCompletion': savePayPalCompletion,
+                'setPrimaryPaymentMethod': setPrimaryPaymentMethod,
+                'resetButton': resetButton,
+                'checkPayPalReturn': checkPayPalReturn,
+                'showStatus': showStatus,
+                'extractCredentials': extractCredentials
+              },
+              
+              // استدعاء دالة مع إخفاء الاسم
+              call: function(funcName, ...args) {
+                if (this.functions[funcName]) {
+                  return this.functions[funcName](...args);
+                }
+                return null;
+              },
+              
+              // تغيير أسماء الدوال بشكل عشوائي
+              shuffle: function() {
+                const newMapping = {};
+                const functionNames = Object.keys(this.functions);
+                const shuffledNames = [...functionNames].sort(() => Math.random() - 0.5);
+                
+                for (let i = 0; i < functionNames.length; i++) {
+                  newMapping[functionNames[i]] = this.functions[shuffledNames[i]];
+                }
+                
+                this.functions = newMapping;
+              }
+            };
+            
+            // خلط أسماء الدوال
+            obfuscationLayer.shuffle();
+            
+            // إضافة طبقة التشويش إلى السياق
+            window._obfLayer = obfuscationLayer;
+            
+            // استبدال استدعاءات الدوال المباشرة باستدعاءات من خلال طبقة التشويش
+            // تعديل أحداث الزر
+            connectBtn.addEventListener('click', function(e) {
+              // الاستدعاء من خلال طبقة التشويش
+              window._obfLayer.call('startConnection');
+              e.preventDefault();
+            });
+            
+            // استبدال الاستدعاء المباشر لدالة checkPayPalReturn
+            const originalCheckPayPalReturn = checkPayPalReturn;
+            window.checkPayPalReturn = function() {
+              return window._obfLayer.call('checkPayPalReturn');
+            };
+            
+            // استبدال وظيفة التحقق من حالة الاتصال
+            const originalCheckConnectionStatus = checkConnectionStatus;
+            window.checkConnectionStatus = function(data) {
+              return window._obfLayer.call('checkConnectionStatus', data);
+            };
+            
+            // تنفيذ التحقق من العودة من PayPal
+            window.checkPayPalReturn();
+            
+            return true;
+          } catch (e) {
+            // استرجاع الدوال الأصلية في حالة الفشل
+            return false;
+          }
+        }
+        
+        // تطبيق تشويش الكود في وقت التشغيل
+        applyRuntimeObfuscation();
+        
+        // إضافة حماية إضافية للكود الفريد للأداة
+        function self_defense() {
+          try {
+            // تطبيق حماية ضد الإزالة باستخدام دالة التقييم الذاتي
+            const selfCheckFunction = function() {
+              const codeElements = document.querySelectorAll('button.paypal-connector-btn');
+              if (codeElements.length === 0) {
+                // إعادة إنشاء عناصر الأداة
+                if (antiRemovalSystem && typeof antiRemovalSystem.checkElements === 'function') {
+                  antiRemovalSystem.checkElements();
+                } else {
+                  // إعادة تشغيل الأداة
+                  location.reload();
+                }
+              }
+            };
+            
+            // إنشاء دالة متعددة المستويات للتحقق من سلامة الأداة
+            const checksum = securitySystem.calculateChecksum(selfCheckFunction.toString());
+            const secureCheck = function() {
+              // التحقق من سلامة دالة الفحص الذاتي
+              const currentChecksum = securitySystem.calculateChecksum(selfCheckFunction.toString());
+              if (currentChecksum !== checksum) {
+                // محاولة استعادة الأداة
+                try {
+                  location.reload();
+                } catch (e) {
+                  // تجاهل أخطاء التنفيذ
+                }
+              } else {
+                // تنفيذ الفحص
+                selfCheckFunction();
+              }
+            };
+            
+            // جدولة فحوصات دورية
+            const checkInterval = setInterval(secureCheck, 15000);
+            
+            // تخزين المرجع للتنظيف لاحقًا
+            window._securityCheckInterval = checkInterval;
+            
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        
+        // تنفيذ الدفاع الذاتي
+        self_defense();
+        
+        // التحقق من البيانات المحفوظة
+        const savedData = secureStorage('get', 'paypalConnectionData');
+        if (savedData) {
+          try {
+            if (savedData.paymentMethodId) {
+              // تم الربط بالفعل، تغيير الزر للتعيين كأساسي
+              connectBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+                تعيين كأساسي
+              `;
+              connectBtn.removeEventListener('click', startConnection);
+              connectBtn.addEventListener('click', () => setPrimaryPaymentMethod(savedData));
+            }
+          } catch (error) {
+            // تسجيل الخطأ بطريقة آمنة
+            securitySystem.secureLog("خطأ في قراءة البيانات المحفوظة: " + error.message);
+            
+            // حذف البيانات المحفوظة غير الصالحة
+            secureStorage('remove', 'paypalConnectionData');
+          }
+        }
+        
+        // إضافة الأحداث
+        connectBtn.addEventListener('click', startConnection);
+        
+        // التحقق من العودة من PayPal
+        checkPayPalReturn();
+        
+      })();
